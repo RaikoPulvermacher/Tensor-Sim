@@ -1,4 +1,4 @@
-🇬🇧 **English version:** [Tensor-Sim-en](https://github.com/RaikoPulvermacher/Tensor-Sim-en)
+🇬🇧 **English version:** [eng-Tensor-Sim](https://github.com/RaikoPulvermacher/eng-Tensor-Sim)
 
 ---
 
@@ -44,4 +44,4 @@ OSF: https://osf.io/py42t/
 
 ---
 
-🇬🇧 **English version:** [Tensor-Sim-en](https://github.com/RaikoPulvermacher/Tensor-Sim-en)
+🇬🇧 **English version:** [eng-Tensor-Sim](https://github.com/RaikoPulvermacher/eng-Tensor-Sim)
