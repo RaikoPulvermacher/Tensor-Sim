@@ -9,7 +9,9 @@ Requirements:
 - Python 3.8+
 
 Run:
+```
 python tensor_sim_v117.py
+```
 
 ## 🔗 Verbindung zum Hauptprojekt
 
