@@ -1,5 +1,9 @@
+🇬🇧 **English version:** [Tensor-Sim-en](https://github.com/RaikoPulvermacher/Tensor-Sim-en)
+
+---
+
 # Tensor-Sim
-Bottum-up field simulation (no particles)-experimental runtime for Tensor der Realitäten
+Bottom-up field simulation (no particles)-experimental runtime for Tensor der Realitäten
 
 Requirements:
 - Python 3.8+
@@ -26,9 +30,16 @@ Dieses Repository (**Tensor-Sim**) ist die
 und dient als Feld-Simulation ohne Teilchenmodell.
 
 
-## License
+## Lizenz
 
-This project is licensed under:
-Creative Commons Attribution 4.0 (CC BY 4.0)
+Dieses Projekt steht unter der:
+**Pulvermacher Open Research License (PORL) Version 1.0**
 
-Author: Raiko Pulvermacher
+Autor: Raiko Pulvermacher
+E-Mail: Pulvermacher.Raiko@web.de
+ORCID: https://orcid.org/0009-0003-9431-1001
+OSF: https://osf.io/py42t/
+
+---
+
+🇬🇧 **English version:** [Tensor-Sim-en](https://github.com/RaikoPulvermacher/Tensor-Sim-en)
