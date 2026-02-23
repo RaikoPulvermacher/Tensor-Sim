@@ -1,4 +1,4 @@
-🇬🇧 **English version:** [Tensor-Sim-en](https://github.com/RaikoPulvermacher/Tensor-Sim-en)
+🇬🇧 **English version:** [eng-Tensor-Sim](https://github.com/RaikoPulvermacher/eng-Tensor-Sim)
 
 ---
 
@@ -9,7 +9,9 @@ Requirements:
 - Python 3.8+
 
 Run:
+```
 python tensor_sim_v117.py
+```
 
 ## 🔗 Verbindung zum Hauptprojekt
 
@@ -42,4 +44,4 @@ OSF: https://osf.io/py42t/
 
 ---
 
-🇬🇧 **English version:** [Tensor-Sim-en](https://github.com/RaikoPulvermacher/Tensor-Sim-en)
+🇬🇧 **English version:** [eng-Tensor-Sim](https://github.com/RaikoPulvermacher/eng-Tensor-Sim)
