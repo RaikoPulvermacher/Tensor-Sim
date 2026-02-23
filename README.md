@@ -1,5 +1,9 @@
+🇬🇧 **English version:** [README_en.md](README_en.md)
+
+---
+
 # Tensor-Sim
-Bottum-up field simulation (no particles)-experimental runtime for Tensor der Realitäten
+Bottom-up field simulation (no particles)-experimental runtime for Tensor der Realitäten
 
 Requirements:
 - Python 3.8+

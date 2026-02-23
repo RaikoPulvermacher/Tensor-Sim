@@ -1,3 +1,7 @@
+🇩🇪 **Deutsche Version:** [README.md](README.md)
+
+---
+
 # Tensor-Sim
 Bottom-up field simulation (no particles) – experimental runtime for Tensor der Realitäten
 
