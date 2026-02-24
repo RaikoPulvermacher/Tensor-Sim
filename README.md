@@ -3,12 +3,12 @@
 ---
 
 # Tensor-Sim
-Bottom-up field simulation (no particles)-experimental runtime for Tensor der Realitäten
+Bottom-up Feldsimulation (keine Teilchen) – experimentelle Laufzeit für Tensor der Realitäten
 
-Requirements:
+Anforderungen:
 - Python 3.8+
 
-Run:
+Ausführen:
 ```
 python tensor_sim_v117.py
 ```
