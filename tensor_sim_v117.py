@@ -687,6 +687,126 @@ def plot_cone_events(events: pd.DataFrame, outdir: Path) -> None:
     plt.close()
 
 
+def plot_filament_web(shells: pd.DataFrame, params: Params, outdir: Path) -> None:
+    """Kosmisches Web-Gefüge via Zel'dovich-Approximation.
+
+    Erzeugt ``fig_cosmic_web_filaments.png``: ein dunkles Dichte-Bild mit
+    Filamenten, Voids und Clustern – genau wie echte Universum-Simulationen
+    (Millennium, Illustris).
+
+    Physik
+    ------
+    1. Starte mit N² gleichmäßig verteilten Testteilchen auf einem 2-D-Gitter.
+    2. Erzeuge ein Gaußsches Zufallsfeld δ(k) im Fourier-Raum mit
+       Leistungsspektrum  P(k) ~ k^n_spec · exp(−k²/k_cut²).
+    3. Löse Poisson-Gleichung:  φ(k) = −δ(k) / k².
+    4. Verschiebungsfeld:  Ψ = ∇φ  (Zel'dovich-Näherung).
+    5. Neue Positionen:  x_neu = x₀ + D · Ψ_x  (periodisch gefaltet).
+    6. Das Omega-Profil der Simulation gewichtet die Helligkeit: Dichte-Kerne
+       (hohes ω_eff) leuchten heller als Voids.
+    """
+    # ---- Konfiguration --------------------------------------------------- #
+    N_GRID = 400          # Gitter → N²=160 000 Teilchen pro Projektion
+    DISP_FRAC = 0.20      # Verschiebung als Anteil der Boxgröße (20 %)
+    N_SPEC = -1.0         # Leistungsspektrum-Steigung (Harrison-Zel'dovich)
+    K_CUT = 0.033         # Gaußsche Glättung (verhindert Shell-Crossing)
+    GRIDSIZE = 160        # hexbin-Auflösung je Achse
+    DARK = "#000814"
+    # ---------------------------------------------------------------------- #
+
+    rng = np.random.default_rng(params.seed + 77)
+    box = max(float(shells["r_mpc"].max()) * 2.0, 1.0)  # Durchmesser der Sim.
+
+    # ---- Gleichmäßiges Startgitter --------------------------------------- #
+    lin = np.linspace(0.0, box, N_GRID, endpoint=False)
+    gx, gy = np.meshgrid(lin, lin, indexing="ij")
+    x0, y0 = gx.ravel(), gy.ravel()
+
+    # ---- Fourier-Raum ---------------------------------------------------- #
+    kx = np.fft.rfftfreq(N_GRID)          # Form (N_GRID//2+1,)
+    ky = np.fft.fftfreq(N_GRID)           # Form (N_GRID,)
+    KX, KY = np.meshgrid(kx, ky, indexing="ij")
+    K2 = KX**2 + KY**2
+    K2[0, 0] = 1.0                         # Division durch Null vermeiden
+
+    P_k = K2 ** (N_SPEC / 2.0) * np.exp(-K2 / (2.0 * K_CUT**2))
+    P_k[0, 0] = 0.0
+
+    def _zeldovich(rng_local: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+        """Berechne eine Zel'dovich-verschobene Koordinaten-Realisierung."""
+        amp = rng_local.standard_normal((N_GRID, N_GRID // 2 + 1)) + 1j * rng_local.standard_normal(
+            (N_GRID, N_GRID // 2 + 1)
+        )
+        delta_k = amp * np.sqrt(P_k)
+        phi_k = np.where(K2 > 0, -delta_k / K2, 0j)
+
+        psi_x = np.fft.irfft2(1j * KX * phi_k)  # (N_GRID, N_GRID)
+        psi_y = np.fft.irfft2(1j * KY * phi_k)
+
+        # Normierung: Ziel-σ = DISP_FRAC · box
+        target = DISP_FRAC * box
+        psi_x = psi_x / (np.std(psi_x) + 1e-12) * target
+        psi_y = psi_y / (np.std(psi_y) + 1e-12) * target
+
+        row = np.arange(N_GRID * N_GRID) // N_GRID
+        col = np.arange(N_GRID * N_GRID) % N_GRID
+
+        xn = (x0 + psi_x[row, col]) % box
+        yn = (y0 + psi_y[row, col]) % box
+        return xn, yn
+
+    xn_xy, yn_xy = _zeldovich(rng)           # XY-Projektion
+    xn_xz, zn_xz = _zeldovich(rng)          # XZ-Projektion (neue Realisierung)
+
+    # ---- Omega-Gewichtung: hohe Feldstärke → heller ---------------------- #
+    def _omega_weight(px: np.ndarray, py: np.ndarray) -> np.ndarray:
+        r = np.hypot(px - box / 2.0, py - box / 2.0)
+        w = np.array([omega_of_r(float(ri), params.omega0, params.r0, params.p) for ri in r])
+        return w / (w.max() + 1e-10)
+
+    w_xy = _omega_weight(xn_xy, yn_xy)
+    w_xz = _omega_weight(xn_xz, zn_xz)
+
+    # ---- Zeichnen -------------------------------------------------------- #
+    fig, axes = plt.subplots(1, 2, figsize=(22, 11), facecolor=DARK)
+    fig.subplots_adjust(wspace=0.04, left=0.05, right=0.97, top=0.90, bottom=0.07)
+
+    panel_specs = [
+        (axes[0], xn_xy, yn_xy, w_xy, "🌌 Kosmisches Web — Projektion XY"),
+        (axes[1], xn_xz, zn_xz, w_xz, "🌌 Kosmisches Web — Projektion XZ"),
+    ]
+    for ax, px, py, w, title in panel_specs:
+        ax.set_facecolor(DARK)
+        ax.hexbin(
+            px, py,
+            C=w, reduce_C_function=np.mean,
+            gridsize=GRIDSIZE, cmap="inferno",
+            mincnt=1, linewidths=0.0,
+            extent=[0, box, 0, box],
+        )
+        ax.set_xlim(0, box)
+        ax.set_ylim(0, box)
+        ax.set_xlabel("Mpc", color="#335577", fontsize=10)
+        ax.set_ylabel("Mpc", color="#335577", fontsize=10)
+        ax.set_title(title, color="#77ccee", fontsize=13, pad=10)
+        ax.tick_params(colors="#223344", labelsize=8)
+        for sp in ax.spines.values():
+            sp.set_color("#112233")
+        ax.set_aspect("equal")
+
+    fig.suptitle(
+        f"Tensor-Sim v{VERSION}  ·  Zel'dovich-Kosmisches-Web  ·  "
+        f"seed={params.seed}  ·  r_max={params.max_mpc:,.0f} Mpc  ·  "
+        f"Ω₀={params.omega0}  ·  r₀={params.r0} Mpc  ·  p={params.p}",
+        color="#5599bb", fontsize=10,
+    )
+    plt.savefig(
+        outdir / "fig_cosmic_web_filaments.png",
+        dpi=200, facecolor=DARK, bbox_inches="tight",
+    )
+    plt.close(fig)
+
+
 def _img_b64(path: Path) -> str:
     """Return a data URI for a PNG file (base64-encoded)."""
     data = base64.b64encode(path.read_bytes()).decode("ascii")
@@ -742,6 +862,7 @@ def generate_html_report(
 
     # --- images ---
     plot_names = [
+        ("🌌 Kosmisches Web – Filamente & Voids (Zel'dovich XY)", "fig_cosmic_web_filaments.png"),
         ("Ω_eff vs r  –  Winkelgeschwindigkeit über Radius", "fig_omega_vs_r.png"),
         ("α vs r  –  Kopplungsstärke über Radius", "fig_alpha_vs_r.png"),
         ("Ω_eff vs α  –  Kopplungs-Phasenraum", "fig_omega_vs_alpha.png"),
@@ -1119,6 +1240,7 @@ def main() -> int:
 
     if params.plots:
         plot_shells(shells, outdir)
+        plot_filament_web(shells, params, outdir)
         if params.geometry:
             plot_xy(nodes, outdir)
             plot_trichter_xz(nodes, outdir)
