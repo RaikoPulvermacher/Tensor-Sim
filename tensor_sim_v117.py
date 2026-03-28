@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -686,6 +687,325 @@ def plot_cone_events(events: pd.DataFrame, outdir: Path) -> None:
     plt.close()
 
 
+def _img_b64(path: Path) -> str:
+    """Return a data URI for a PNG file (base64-encoded)."""
+    data = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{data}"
+
+
+def generate_html_report(
+    params: Params,
+    outdir: Path,
+    nodes: pd.DataFrame,
+    shells: pd.DataFrame,
+    cones: "pd.DataFrame | None",
+    events: "pd.DataFrame | None",
+) -> None:
+    """Write a self-contained HTML Teleskop-Beobachtungs-Report to outdir/report.html.
+
+    All images are embedded as base64 data URIs so the file works offline.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # --- helpers ---
+    def _df_html(df: pd.DataFrame, max_rows: int = 50) -> str:
+        display = df.head(max_rows)
+        rows_html = []
+        for _, row in display.iterrows():
+            cells = "".join(
+                f"<td>{v:.6g}" if isinstance(v, float) else f"<td>{v}"
+                for v in row
+            )
+            rows_html.append(f"<tr>{cells}</tr>")
+        header = "".join(f"<th>{c}" for c in display.columns)
+        note = ""
+        if len(df) > max_rows:
+            note = f'<p class="note">Zeige {max_rows} von {len(df)} Zeilen — vollständige Daten in CSV-Datei.</p>'
+        return (
+            '<div class="table-wrap">'
+            + note
+            + f'<table><thead><tr>{header}</tr></thead><tbody>'
+            + "".join(rows_html)
+            + "</tbody></table></div>"
+        )
+
+    def _img_section(label: str, path: Path) -> str:
+        if not path.exists():
+            return ""
+        b64 = _img_b64(path)
+        return (
+            f'<div class="plot-block">'
+            f'<div class="plot-label">📡 {label}</div>'
+            f'<img src="{b64}" alt="{label}">'
+            f"</div>"
+        )
+
+    # --- images ---
+    plot_names = [
+        ("Ω_eff vs r  –  Winkelgeschwindigkeit über Radius", "fig_omega_vs_r.png"),
+        ("α vs r  –  Kopplungsstärke über Radius", "fig_alpha_vs_r.png"),
+        ("Ω_eff vs α  –  Kopplungs-Phasenraum", "fig_omega_vs_alpha.png"),
+        ("Shell-Besetzung  –  Nodes pro Shell", "fig_shell_occupancy.png"),
+        ("Trichter-Tiefenverteilung", "fig_trichter_depth_hist.png"),
+        ("XY-Karte aller Nodes (Subsample)", "fig_xy_nodes.png"),
+        ("Trichter-Querschnitt X-Z (Slice)", "fig_trichter_xz_slice.png"),
+        ("Kegel-Ereignisse", "fig_cone_events_counts.png"),
+    ]
+    images_html = "".join(_img_section(lbl, outdir / fn) for lbl, fn in plot_names)
+
+    # --- parameter table ---
+    param_rows = "".join(
+        f"<tr><td>{k}</td><td>{v}</td></tr>"
+        for k, v in [
+            ("max_mpc", f"{params.max_mpc:,.0f} Mpc"),
+            ("shell_mpc", f"{params.shell_mpc:.0f} Mpc"),
+            ("capacity", params.capacity),
+            ("occupancy_mode", params.occupancy_mode),
+            ("alpha_max", params.alpha_max),
+            ("omega0", params.omega0),
+            ("r0", params.r0),
+            ("p (Falloff-Exponent)", params.p),
+            ("turn_ticks", f"{params.turn_ticks:,}"),
+            ("dt", params.dt),
+            ("rot_steps", f"{params.rot_steps:,}"),
+            ("trichter_strength", params.trichter_strength),
+            ("ell_trichter", f"{params.ell_trichter:,.0f} Mpc"),
+            ("cone_mode", params.cone_mode),
+            ("seed", params.seed),
+        ]
+    )
+
+    omega_min = float(shells["omega_eff"].min())
+    omega_max = float(shells["omega_eff"].max())
+
+    html = f"""<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tensor-Sim v{VERSION} — Teleskop-Beobachtungsprotokoll</title>
+<style>
+  :root {{
+    --bg: #070d14;
+    --panel: #0d1b2a;
+    --border: #1b3a5c;
+    --green: #00ff88;
+    --cyan: #00d4ff;
+    --yellow: #ffe066;
+    --text: #c8daf0;
+    --dim: #6a8aaa;
+    --red: #ff4f6e;
+  }}
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+    line-height: 1.6;
+  }}
+  header {{
+    background: var(--panel);
+    border-bottom: 2px solid var(--green);
+    padding: 20px 32px;
+  }}
+  header h1 {{
+    color: var(--green);
+    font-size: 1.6em;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }}
+  header .meta {{ color: var(--dim); font-size: 0.85em; margin-top: 4px; }}
+  header .meta span {{ color: var(--cyan); }}
+  .badge {{
+    display: inline-block;
+    background: #002b1a;
+    border: 1px solid var(--green);
+    color: var(--green);
+    padding: 2px 10px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    margin-right: 8px;
+    margin-top: 6px;
+  }}
+  main {{ max-width: 1400px; margin: 0 auto; padding: 32px 24px; }}
+  section {{ margin-bottom: 48px; }}
+  h2 {{
+    color: var(--cyan);
+    font-size: 1.1em;
+    letter-spacing: 2px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+    margin-bottom: 18px;
+    text-transform: uppercase;
+  }}
+  /* stats grid */
+  .stats-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 14px;
+    margin-bottom: 24px;
+  }}
+  .stat-card {{
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+  }}
+  .stat-card .label {{ color: var(--dim); font-size: 0.78em; text-transform: uppercase; }}
+  .stat-card .value {{ color: var(--yellow); font-size: 1.5em; font-weight: bold; margin-top: 2px; }}
+  /* param table */
+  .param-table {{ border-collapse: collapse; width: 100%; max-width: 600px; }}
+  .param-table td {{
+    border: 1px solid var(--border);
+    padding: 5px 12px;
+  }}
+  .param-table tr td:first-child {{ color: var(--dim); width: 55%; }}
+  .param-table tr td:last-child {{ color: var(--green); }}
+  /* images */
+  .plots-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(560px, 1fr));
+    gap: 20px;
+  }}
+  .plot-block {{
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }}
+  .plot-label {{
+    background: #0a1a2e;
+    color: var(--cyan);
+    font-size: 0.85em;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    letter-spacing: 1px;
+  }}
+  .plot-block img {{ width: 100%; display: block; }}
+  /* tables */
+  .table-wrap {{ overflow-x: auto; }}
+  .note {{ color: var(--dim); font-size: 0.82em; margin-bottom: 8px; }}
+  table {{
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.82em;
+  }}
+  thead tr {{ background: #0a1a2e; }}
+  th {{
+    color: var(--cyan);
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    text-align: left;
+    white-space: nowrap;
+  }}
+  td {{
+    color: var(--text);
+    padding: 4px 10px;
+    border: 1px solid #111e2e;
+    white-space: nowrap;
+  }}
+  tbody tr:nth-child(even) {{ background: #0b1520; }}
+  tbody tr:hover {{ background: #122034; }}
+  footer {{
+    text-align: center;
+    color: var(--dim);
+    font-size: 0.78em;
+    padding: 24px;
+    border-top: 1px solid var(--border);
+    margin-top: 40px;
+  }}
+</style>
+</head>
+<body>
+<header>
+  <h1>🔭 Tensor-Sim v{VERSION} — Teleskop-Beobachtungsprotokoll</h1>
+  <div class="meta">
+    Beobachtungszeit: <span>{ts}</span> &nbsp;|&nbsp;
+    Instrument: <span>Tensor-Feld-Simulator v{VERSION}</span> &nbsp;|&nbsp;
+    Seed: <span>{params.seed}</span> &nbsp;|&nbsp;
+    Modus: <span>{params.occupancy_mode}</span>
+  </div>
+  <div style="margin-top:10px">
+    <span class="badge">🌌 {len(shells)} Shells</span>
+    <span class="badge">⚛ {len(nodes):,} Nodes</span>
+    <span class="badge">Ω_eff {omega_min:.4f} – {omega_max:.4f}</span>
+    <span class="badge">r_max {params.max_mpc:,.0f} Mpc</span>
+    <span class="badge">cone_mode: {params.cone_mode}</span>
+  </div>
+</header>
+<main>
+
+<section>
+  <h2>📊 Beobachtungsstatistik</h2>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="label">Shells</div><div class="value">{len(shells)}</div></div>
+    <div class="stat-card"><div class="label">Nodes gesamt</div><div class="value">{len(nodes):,}</div></div>
+    <div class="stat-card"><div class="label">Nodes / Shell</div><div class="value">{params.capacity}</div></div>
+    <div class="stat-card"><div class="label">Ω_eff min</div><div class="value">{omega_min:.5f}</div></div>
+    <div class="stat-card"><div class="label">Ω_eff max</div><div class="value">{omega_max:.4f}</div></div>
+    <div class="stat-card"><div class="label">r_max (Mpc)</div><div class="value">{params.max_mpc:,.0f}</div></div>
+    <div class="stat-card"><div class="label">Shell-Dicke (Mpc)</div><div class="value">{params.shell_mpc:.0f}</div></div>
+    <div class="stat-card"><div class="label">α_max</div><div class="value">{params.alpha_max}</div></div>
+  </div>
+</section>
+
+<section>
+  <h2>⚙️ Simulations-Parameter</h2>
+  <table class="param-table">
+    <tbody>{param_rows}</tbody>
+  </table>
+</section>
+
+<section>
+  <h2>🖼 Felddiagramme (Rohdaten-Bilder)</h2>
+  <div class="plots-grid">
+    {images_html}
+  </div>
+</section>
+
+<section>
+  <h2>📄 Rohdaten: shells.csv  ({len(shells)} Zeilen)</h2>
+  {_df_html(shells, max_rows=50)}
+</section>
+
+<section>
+  <h2>📄 Rohdaten: nodes.csv  ({len(nodes):,} Zeilen)</h2>
+  {_df_html(nodes, max_rows=100)}
+</section>
+"""
+
+    if cones is not None and len(cones) > 0:
+        html += f"""
+<section>
+  <h2>📄 Rohdaten: cones.csv  ({len(cones)} Zeilen)</h2>
+  {_df_html(cones, max_rows=50)}
+</section>
+"""
+
+    if events is not None and len(events) > 0:
+        html += f"""
+<section>
+  <h2>📄 Rohdaten: cone_events.csv  ({len(events)} Zeilen)</h2>
+  {_df_html(events, max_rows=50)}
+</section>
+"""
+
+    html += f"""
+</main>
+<footer>
+  Tensor-Sim v{VERSION} &nbsp;·&nbsp; Autor: Raiko Pulvermacher &nbsp;·&nbsp;
+  Generiert: {ts} &nbsp;·&nbsp; PORL v1.0
+</footer>
+</body>
+</html>
+"""
+
+    report_path = outdir / "report.html"
+    report_path.write_text(html, encoding="utf-8")
+    print(f"report: {report_path}")
+
+
 def parse_args() -> Params:
     ap = argparse.ArgumentParser(
         description=(
@@ -806,6 +1126,7 @@ def main() -> int:
             plot_cone_events(events, outdir)
 
     save_manifest(params, outdir, nodes, shells, cones, events)
+    generate_html_report(params, outdir, nodes, shells, cones, events)
 
     # stdout summary
     print(f"Tensor Simulation v{VERSION} done.")
