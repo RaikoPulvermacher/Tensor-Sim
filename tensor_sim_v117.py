@@ -687,84 +687,47 @@ def plot_cone_events(events: pd.DataFrame, outdir: Path) -> None:
     plt.close()
 
 
-def plot_tensor_field_web(shells: pd.DataFrame, params: Params, outdir: Path) -> None:
-    """Emergente Tensor-Feld-Struktur — keine aufgezwungene Physik, kein externes Modell.
+def plot_tensor_field_web(nodes: pd.DataFrame, outdir: Path) -> None:
+    """Tensor-Feld-Struktur direkt aus den Simulations-Knoten.
 
-    Die Visualisierung entsteht ausschließlich aus den echten Simulations-Daten:
-
-    1. Differentielle Rotation: Jede Schale driftet proportional zu omega_eff(r).
-       Da omega_eff nicht-linear mit r abfällt, entstehen für jede Schale
-       unterschiedliche phi-Versätze (z.B. 0°, 69°, 300°, 98°...). Diese
-       nicht-monotone Folge bricht die Symmetrie und erzeugt natürliche
-       Dichte-Kontraste — ohne aufgezwungene Physik.
-
-    2. Trichter-Kompression: z_factor = max(0.05, 1 − 0.35·trichter_depth(r))
-       Äußere Schalen werden entlang z gestaucht → natürliche Disk-Struktur.
-
-    3. Theta-Band: Knoten konzentrieren sich in einem äquatorialen Streifen
-       (±22.5° um die Äquatorebene) → komprimiertes Band sichtbar in der
-       Seitenansicht und in der Mollweide-Himmelskarte.
+    Keine aufgezwungene Physik, kein goldener Schnitt, keine Euler-Logik,
+    keine Richtungsvorgaben.  Die Funktion liest ausschließlich die Spalten
+    x, y, z und omega aus dem nodes-DataFrame — exakt so wie die Simulation
+    sie berechnet hat.  Alles andere entsteht von selbst.
 
     Drei Ansichten:
-    - XY  Draufsicht: Radiale omega_eff-Struktur
-    - XZ  Seitenansicht: Trichter-Disk-Struktur (emergent)
-    - Mollweide: Alle Knoten auf die Himmelskugel projiziert (wie ein Teleskop-Survey)
+    - x/y  — Draufsicht der Knoten-Positionen, Helligkeit = omega
+    - x/z  — Seitenansicht,  Helligkeit = omega
+    - Mollweide-Himmelskarte: Winkel direkt aus atan2(y,x) und atan2(z,r)
+      der bereits berechneten Koordinaten abgelesen — kein neuer Winkel
+      wird eingeführt.
     """
-    N_VIS = 400           # Visualisierungs-Punkte pro Schale (exakt gleiche Physik)
     DARK = "#000814"
 
-    rng = np.random.default_rng(params.seed)
-    turn = float(params.turn_ticks)
-    quarter = turn / 4.0
-    theta_amp = float(params.theta_amp_ticks) * quarter
+    # --- nur echte Knoten-Daten lesen, die Geometrie gesetzt haben ----------
+    nd = nodes.dropna(subset=["x", "y", "z"])
+    if nd.empty:
+        return
 
-    xs_l, ys_l, zs_l, ws_l = [], [], [], []
-    phi_rad_l, dec_rad_l = [], []          # für Mollweide
-
-    for row in shells.itertuples(index=False):
-        r = float(row.r_mpc)
-        omega_eff = float(row.omega_eff)
-        trichter_depth = float(row.trichter_depth)
-
-        # === Exakt dieselbe Drift-Formel wie in build_shell_nodes ===
-        drift = omega_eff * params.dt * turn * params.rot_steps
-
-        # Zufällige Startwinkel (gleichmäßig, wie in der Simulation)
-        phi0 = rng.uniform(0.0, turn, size=N_VIS)
-        theta0 = rng.uniform(quarter - theta_amp, quarter + theta_amp, size=N_VIS)
-
-        phi = np.mod(phi0 + drift, turn)
-
-        phi_rad = phi / turn * (2.0 * math.pi)
-        theta_rad = theta0 / turn * (2.0 * math.pi)
-
-        # === Exakt dieselbe Trichter-Kompression wie in build_shell_nodes ===
-        z_factor = max(0.05, 1.0 - 0.35 * trichter_depth)
-
-        x = r * np.sin(theta_rad) * np.cos(phi_rad)
-        y = r * np.sin(theta_rad) * np.sin(phi_rad)
-        z = r * np.cos(theta_rad) * z_factor
-
-        xs_l.append(x);  ys_l.append(y);  zs_l.append(z)
-        ws_l.append(np.full(N_VIS, omega_eff))
-        # Für Mollweide: RA = phi_rad (0..2π → verschoben auf −π..π)
-        phi_rad_l.append(phi_rad - math.pi)
-        # Deklination = π/2 − theta (theta=π/2 → Äquator → Dec=0)
-        dec_rad_l.append(math.pi / 2.0 - theta_rad)
-
-    xs = np.concatenate(xs_l);  ys = np.concatenate(ys_l)
-    zs = np.concatenate(zs_l);  ws = np.concatenate(ws_l)
-    phi_all = np.concatenate(phi_rad_l)
-    dec_all = np.concatenate(dec_rad_l)
-
+    xs = nd["x"].to_numpy(dtype=float)
+    ys = nd["y"].to_numpy(dtype=float)
+    zs = nd["z"].to_numpy(dtype=float)
+    ws = nd["omega"].to_numpy(dtype=float)
     ws_norm = ws / (ws.max() + 1e-10)
-    R = float(shells["r_mpc"].max())
+
+    R = float(np.sqrt(xs**2 + ys**2 + zs**2).max())
+    if R == 0.0:
+        return
+
+    # Winkel für Mollweide direkt aus den berechneten Koordinaten ablesen
+    ra  = np.arctan2(ys, xs)                              # -π … +π
+    dec = np.arctan2(zs, np.sqrt(xs**2 + ys**2))         # -π/2 … +π/2
 
     # ---- Abbildung -------------------------------------------------------- #
     fig = plt.figure(figsize=(26, 9), facecolor=DARK)
     fig.subplots_adjust(wspace=0.06, left=0.04, right=0.98, top=0.88, bottom=0.08)
 
-    # ---- Panel 1: XY Draufsicht ----------------------------------------- #
+    # ---- Panel 1: x/y ----------------------------------------------------- #
     ax1 = fig.add_subplot(1, 3, 1, facecolor=DARK)
     ax1.hexbin(xs, ys, C=ws_norm, reduce_C_function=np.mean,
                gridsize=120, cmap="inferno", mincnt=1, linewidths=0.0,
@@ -772,13 +735,13 @@ def plot_tensor_field_web(shells: pd.DataFrame, params: Params, outdir: Path) ->
     ax1.set_xlim(-R, R);  ax1.set_ylim(-R, R)
     ax1.set_xlabel("x (Mpc)", color="#335577", fontsize=9)
     ax1.set_ylabel("y (Mpc)", color="#335577", fontsize=9)
-    ax1.set_title("🔭 Draufsicht (XY)\nomega-Dichte-Struktur", color="#77ccee", fontsize=11, pad=8)
+    ax1.set_title("Knoten x/y\nomega-Dichte", color="#77ccee", fontsize=11, pad=8)
     ax1.tick_params(colors="#223344", labelsize=7)
     for sp in ax1.spines.values():
         sp.set_color("#112233")
     ax1.set_aspect("equal")
 
-    # ---- Panel 2: XZ Seitenansicht (Trichter-Disk) ----------------------- #
+    # ---- Panel 2: x/z ----------------------------------------------------- #
     ax2 = fig.add_subplot(1, 3, 2, facecolor=DARK)
     ax2.hexbin(xs, zs, C=ws_norm, reduce_C_function=np.mean,
                gridsize=120, cmap="inferno", mincnt=1, linewidths=0.0,
@@ -786,33 +749,25 @@ def plot_tensor_field_web(shells: pd.DataFrame, params: Params, outdir: Path) ->
     ax2.set_xlim(-R, R);  ax2.set_ylim(-R, R)
     ax2.set_xlabel("x (Mpc)", color="#335577", fontsize=9)
     ax2.set_ylabel("z (Mpc)", color="#335577", fontsize=9)
-    ax2.set_title("🔭 Seitenansicht (XZ)\nTrichter erzeugt Disk (emergent)", color="#77ccee", fontsize=11, pad=8)
+    ax2.set_title("Knoten x/z\nomega-Dichte", color="#77ccee", fontsize=11, pad=8)
     ax2.tick_params(colors="#223344", labelsize=7)
     for sp in ax2.spines.values():
         sp.set_color("#112233")
     ax2.set_aspect("equal")
 
-    # ---- Panel 3: Mollweide Himmelskarte --------------------------------- #
+    # ---- Panel 3: Mollweide ----------------------------------------------- #
     ax3 = fig.add_subplot(1, 3, 3, projection="mollweide")
     ax3.set_facecolor(DARK)
-    # Subsample für Geschwindigkeit
-    MAX_MOLL = 60_000
-    if len(phi_all) > MAX_MOLL:
-        idx = rng.choice(len(phi_all), size=MAX_MOLL, replace=False)
-        ra_p, dec_p, w_p = phi_all[idx], dec_all[idx], ws_norm[idx]
-    else:
-        ra_p, dec_p, w_p = phi_all, dec_all, ws_norm
-    ax3.scatter(ra_p, dec_p, c=w_p, cmap="inferno",
-                s=0.3, alpha=0.5, linewidths=0, vmin=0, vmax=1)
-    ax3.set_title("🔭 Himmelskarte (Mollweide)\nTeleskop-Survey-Ansicht", color="#77ccee", fontsize=11, pad=8)
+    ax3.scatter(ra, dec, c=ws_norm, cmap="inferno",
+                s=0.4, alpha=0.6, linewidths=0, vmin=0, vmax=1)
+    ax3.set_title("Knoten-Himmelskarte\n(Winkel aus x/y/z)", color="#77ccee", fontsize=11, pad=8)
     ax3.tick_params(colors="#334455", labelsize=7)
     ax3.grid(color="#0d1e30", linewidth=0.4, alpha=0.7)
     ax3.set_facecolor(DARK)
 
     fig.suptitle(
-        f"Tensor-Sim v{VERSION}  ·  Emergente Feld-Struktur (keine aufgezwungene Physik)  ·  "
-        f"seed={params.seed}  ·  r_max={params.max_mpc:,.0f} Mpc  ·  "
-        f"Ω₀={params.omega0}  ·  r₀={params.r0} Mpc  ·  p={params.p}",
+        f"Tensor-Sim v{VERSION}  ·  Knoten-Positionen direkt aus der Simulation  ·  "
+        f"{len(nd):,} Knoten",
         color="#5599bb", fontsize=10,
     )
     plt.savefig(
@@ -1255,7 +1210,7 @@ def main() -> int:
 
     if params.plots:
         plot_shells(shells, outdir)
-        plot_tensor_field_web(shells, params, outdir)
+        plot_tensor_field_web(nodes, outdir)
         if params.geometry:
             plot_xy(nodes, outdir)
             plot_trichter_xz(nodes, outdir)
