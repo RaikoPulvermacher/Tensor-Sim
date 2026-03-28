@@ -687,115 +687,130 @@ def plot_cone_events(events: pd.DataFrame, outdir: Path) -> None:
     plt.close()
 
 
-def plot_filament_web(shells: pd.DataFrame, params: Params, outdir: Path) -> None:
-    """Kosmisches Web-Gefüge via Zel'dovich-Approximation.
+def plot_tensor_field_web(shells: pd.DataFrame, params: Params, outdir: Path) -> None:
+    """Emergente Tensor-Feld-Struktur — keine aufgezwungene Physik, kein externes Modell.
 
-    Erzeugt ``fig_cosmic_web_filaments.png``: ein dunkles Dichte-Bild mit
-    Filamenten, Voids und Clustern – genau wie echte Universum-Simulationen
-    (Millennium, Illustris).
+    Die Visualisierung entsteht ausschließlich aus den echten Simulations-Daten:
 
-    Physik
-    ------
-    1. Starte mit N² gleichmäßig verteilten Testteilchen auf einem 2-D-Gitter.
-    2. Erzeuge ein Gaußsches Zufallsfeld δ(k) im Fourier-Raum mit
-       Leistungsspektrum  P(k) ~ k^n_spec · exp(−k²/k_cut²).
-    3. Löse Poisson-Gleichung:  φ(k) = −δ(k) / k².
-    4. Verschiebungsfeld:  Ψ = ∇φ  (Zel'dovich-Näherung).
-    5. Neue Positionen:  x_neu = x₀ + D · Ψ_x  (periodisch gefaltet).
-    6. Das Omega-Profil der Simulation gewichtet die Helligkeit: Dichte-Kerne
-       (hohes ω_eff) leuchten heller als Voids.
+    1. Differentielle Rotation: Jede Schale driftet proportional zu omega_eff(r).
+       Da omega_eff nicht-linear mit r abfällt, entstehen für jede Schale
+       unterschiedliche phi-Versätze (z.B. 0°, 69°, 300°, 98°...). Diese
+       nicht-monotone Folge bricht die Symmetrie und erzeugt natürliche
+       Dichte-Kontraste — ohne aufgezwungene Physik.
+
+    2. Trichter-Kompression: z_factor = max(0.05, 1 − 0.35·trichter_depth(r))
+       Äußere Schalen werden entlang z gestaucht → natürliche Disk-Struktur.
+
+    3. Theta-Band: Knoten konzentrieren sich in einem äquatorialen Streifen
+       (±22.5° um die Äquatorebene) → komprimiertes Band sichtbar in der
+       Seitenansicht und in der Mollweide-Himmelskarte.
+
+    Drei Ansichten:
+    - XY  Draufsicht: Radiale omega_eff-Struktur
+    - XZ  Seitenansicht: Trichter-Disk-Struktur (emergent)
+    - Mollweide: Alle Knoten auf die Himmelskugel projiziert (wie ein Teleskop-Survey)
     """
-    # ---- Konfiguration --------------------------------------------------- #
-    N_GRID = 400          # Gitter → N²=160 000 Teilchen pro Projektion
-    DISP_FRAC = 0.20      # Verschiebung als Anteil der Boxgröße (20 %)
-    N_SPEC = -1.0         # Leistungsspektrum-Steigung (Harrison-Zel'dovich)
-    K_CUT = 0.033         # Gaußsche Glättung (verhindert Shell-Crossing)
-    GRIDSIZE = 160        # hexbin-Auflösung je Achse
+    N_VIS = 400           # Visualisierungs-Punkte pro Schale (exakt gleiche Physik)
     DARK = "#000814"
-    # ---------------------------------------------------------------------- #
 
-    rng = np.random.default_rng(params.seed + 77)
-    box = max(float(shells["r_mpc"].max()) * 2.0, 1.0)  # Durchmesser der Sim.
+    rng = np.random.default_rng(params.seed)
+    turn = float(params.turn_ticks)
+    quarter = turn / 4.0
+    theta_amp = float(params.theta_amp_ticks) * quarter
 
-    # ---- Gleichmäßiges Startgitter --------------------------------------- #
-    lin = np.linspace(0.0, box, N_GRID, endpoint=False)
-    gx, gy = np.meshgrid(lin, lin, indexing="ij")
-    x0, y0 = gx.ravel(), gy.ravel()
+    xs_l, ys_l, zs_l, ws_l = [], [], [], []
+    phi_rad_l, dec_rad_l = [], []          # für Mollweide
 
-    # ---- Fourier-Raum ---------------------------------------------------- #
-    kx = np.fft.rfftfreq(N_GRID)          # Form (N_GRID//2+1,)
-    ky = np.fft.fftfreq(N_GRID)           # Form (N_GRID,)
-    KX, KY = np.meshgrid(kx, ky, indexing="ij")
-    K2 = KX**2 + KY**2
-    K2[0, 0] = 1.0                         # Division durch Null vermeiden
+    for row in shells.itertuples(index=False):
+        r = float(row.r_mpc)
+        omega_eff = float(row.omega_eff)
+        trichter_depth = float(row.trichter_depth)
 
-    P_k = K2 ** (N_SPEC / 2.0) * np.exp(-K2 / (2.0 * K_CUT**2))
-    P_k[0, 0] = 0.0
+        # === Exakt dieselbe Drift-Formel wie in build_shell_nodes ===
+        drift = omega_eff * params.dt * turn * params.rot_steps
 
-    def _zeldovich(rng_local: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
-        """Berechne eine Zel'dovich-verschobene Koordinaten-Realisierung."""
-        amp = rng_local.standard_normal((N_GRID, N_GRID // 2 + 1)) + 1j * rng_local.standard_normal(
-            (N_GRID, N_GRID // 2 + 1)
-        )
-        delta_k = amp * np.sqrt(P_k)
-        phi_k = np.where(K2 > 0, -delta_k / K2, 0j)
+        # Zufällige Startwinkel (gleichmäßig, wie in der Simulation)
+        phi0 = rng.uniform(0.0, turn, size=N_VIS)
+        theta0 = rng.uniform(quarter - theta_amp, quarter + theta_amp, size=N_VIS)
 
-        psi_x = np.fft.irfft2(1j * KX * phi_k)  # (N_GRID, N_GRID)
-        psi_y = np.fft.irfft2(1j * KY * phi_k)
+        phi = np.mod(phi0 + drift, turn)
 
-        # Normierung: Ziel-σ = DISP_FRAC · box
-        target = DISP_FRAC * box
-        psi_x = psi_x / (np.std(psi_x) + 1e-12) * target
-        psi_y = psi_y / (np.std(psi_y) + 1e-12) * target
+        phi_rad = phi / turn * (2.0 * math.pi)
+        theta_rad = theta0 / turn * (2.0 * math.pi)
 
-        row = np.arange(N_GRID * N_GRID) // N_GRID
-        col = np.arange(N_GRID * N_GRID) % N_GRID
+        # === Exakt dieselbe Trichter-Kompression wie in build_shell_nodes ===
+        z_factor = max(0.05, 1.0 - 0.35 * trichter_depth)
 
-        xn = (x0 + psi_x[row, col]) % box
-        yn = (y0 + psi_y[row, col]) % box
-        return xn, yn
+        x = r * np.sin(theta_rad) * np.cos(phi_rad)
+        y = r * np.sin(theta_rad) * np.sin(phi_rad)
+        z = r * np.cos(theta_rad) * z_factor
 
-    xn_xy, yn_xy = _zeldovich(rng)           # XY-Projektion
-    xn_xz, zn_xz = _zeldovich(rng)          # XZ-Projektion (neue Realisierung)
+        xs_l.append(x);  ys_l.append(y);  zs_l.append(z)
+        ws_l.append(np.full(N_VIS, omega_eff))
+        # Für Mollweide: RA = phi_rad (0..2π → verschoben auf −π..π)
+        phi_rad_l.append(phi_rad - math.pi)
+        # Deklination = π/2 − theta (theta=π/2 → Äquator → Dec=0)
+        dec_rad_l.append(math.pi / 2.0 - theta_rad)
 
-    # ---- Omega-Gewichtung: hohe Feldstärke → heller ---------------------- #
-    def _omega_weight(px: np.ndarray, py: np.ndarray) -> np.ndarray:
-        r = np.hypot(px - box / 2.0, py - box / 2.0)
-        w = np.array([omega_of_r(float(ri), params.omega0, params.r0, params.p) for ri in r])
-        return w / (w.max() + 1e-10)
+    xs = np.concatenate(xs_l);  ys = np.concatenate(ys_l)
+    zs = np.concatenate(zs_l);  ws = np.concatenate(ws_l)
+    phi_all = np.concatenate(phi_rad_l)
+    dec_all = np.concatenate(dec_rad_l)
 
-    w_xy = _omega_weight(xn_xy, yn_xy)
-    w_xz = _omega_weight(xn_xz, zn_xz)
+    ws_norm = ws / (ws.max() + 1e-10)
+    R = float(shells["r_mpc"].max())
 
-    # ---- Zeichnen -------------------------------------------------------- #
-    fig, axes = plt.subplots(1, 2, figsize=(22, 11), facecolor=DARK)
-    fig.subplots_adjust(wspace=0.04, left=0.05, right=0.97, top=0.90, bottom=0.07)
+    # ---- Abbildung -------------------------------------------------------- #
+    fig = plt.figure(figsize=(26, 9), facecolor=DARK)
+    fig.subplots_adjust(wspace=0.06, left=0.04, right=0.98, top=0.88, bottom=0.08)
 
-    panel_specs = [
-        (axes[0], xn_xy, yn_xy, w_xy, "🌌 Kosmisches Web — Projektion XY"),
-        (axes[1], xn_xz, zn_xz, w_xz, "🌌 Kosmisches Web — Projektion XZ"),
-    ]
-    for ax, px, py, w, title in panel_specs:
-        ax.set_facecolor(DARK)
-        ax.hexbin(
-            px, py,
-            C=w, reduce_C_function=np.mean,
-            gridsize=GRIDSIZE, cmap="inferno",
-            mincnt=1, linewidths=0.0,
-            extent=[0, box, 0, box],
-        )
-        ax.set_xlim(0, box)
-        ax.set_ylim(0, box)
-        ax.set_xlabel("Mpc", color="#335577", fontsize=10)
-        ax.set_ylabel("Mpc", color="#335577", fontsize=10)
-        ax.set_title(title, color="#77ccee", fontsize=13, pad=10)
-        ax.tick_params(colors="#223344", labelsize=8)
-        for sp in ax.spines.values():
-            sp.set_color("#112233")
-        ax.set_aspect("equal")
+    # ---- Panel 1: XY Draufsicht ----------------------------------------- #
+    ax1 = fig.add_subplot(1, 3, 1, facecolor=DARK)
+    ax1.hexbin(xs, ys, C=ws_norm, reduce_C_function=np.mean,
+               gridsize=120, cmap="inferno", mincnt=1, linewidths=0.0,
+               extent=[-R, R, -R, R])
+    ax1.set_xlim(-R, R);  ax1.set_ylim(-R, R)
+    ax1.set_xlabel("x (Mpc)", color="#335577", fontsize=9)
+    ax1.set_ylabel("y (Mpc)", color="#335577", fontsize=9)
+    ax1.set_title("🔭 Draufsicht (XY)\nomega-Dichte-Struktur", color="#77ccee", fontsize=11, pad=8)
+    ax1.tick_params(colors="#223344", labelsize=7)
+    for sp in ax1.spines.values():
+        sp.set_color("#112233")
+    ax1.set_aspect("equal")
+
+    # ---- Panel 2: XZ Seitenansicht (Trichter-Disk) ----------------------- #
+    ax2 = fig.add_subplot(1, 3, 2, facecolor=DARK)
+    ax2.hexbin(xs, zs, C=ws_norm, reduce_C_function=np.mean,
+               gridsize=120, cmap="inferno", mincnt=1, linewidths=0.0,
+               extent=[-R, R, -R, R])
+    ax2.set_xlim(-R, R);  ax2.set_ylim(-R, R)
+    ax2.set_xlabel("x (Mpc)", color="#335577", fontsize=9)
+    ax2.set_ylabel("z (Mpc)", color="#335577", fontsize=9)
+    ax2.set_title("🔭 Seitenansicht (XZ)\nTrichter erzeugt Disk (emergent)", color="#77ccee", fontsize=11, pad=8)
+    ax2.tick_params(colors="#223344", labelsize=7)
+    for sp in ax2.spines.values():
+        sp.set_color("#112233")
+    ax2.set_aspect("equal")
+
+    # ---- Panel 3: Mollweide Himmelskarte --------------------------------- #
+    ax3 = fig.add_subplot(1, 3, 3, projection="mollweide")
+    ax3.set_facecolor(DARK)
+    # Subsample für Geschwindigkeit
+    MAX_MOLL = 60_000
+    if len(phi_all) > MAX_MOLL:
+        idx = rng.choice(len(phi_all), size=MAX_MOLL, replace=False)
+        ra_p, dec_p, w_p = phi_all[idx], dec_all[idx], ws_norm[idx]
+    else:
+        ra_p, dec_p, w_p = phi_all, dec_all, ws_norm
+    ax3.scatter(ra_p, dec_p, c=w_p, cmap="inferno",
+                s=0.3, alpha=0.5, linewidths=0, vmin=0, vmax=1)
+    ax3.set_title("🔭 Himmelskarte (Mollweide)\nTeleskop-Survey-Ansicht", color="#77ccee", fontsize=11, pad=8)
+    ax3.tick_params(colors="#334455", labelsize=7)
+    ax3.grid(color="#0d1e30", linewidth=0.4, alpha=0.7)
+    ax3.set_facecolor(DARK)
 
     fig.suptitle(
-        f"Tensor-Sim v{VERSION}  ·  Zel'dovich-Kosmisches-Web  ·  "
+        f"Tensor-Sim v{VERSION}  ·  Emergente Feld-Struktur (keine aufgezwungene Physik)  ·  "
         f"seed={params.seed}  ·  r_max={params.max_mpc:,.0f} Mpc  ·  "
         f"Ω₀={params.omega0}  ·  r₀={params.r0} Mpc  ·  p={params.p}",
         color="#5599bb", fontsize=10,
@@ -862,7 +877,7 @@ def generate_html_report(
 
     # --- images ---
     plot_names = [
-        ("🌌 Kosmisches Web – Filamente & Voids (Zel'dovich XY)", "fig_cosmic_web_filaments.png"),
+        ("🌌 Emergente Tensor-Feld-Struktur — Draufsicht · Trichter-Disk · Himmelskarte", "fig_cosmic_web_filaments.png"),
         ("Ω_eff vs r  –  Winkelgeschwindigkeit über Radius", "fig_omega_vs_r.png"),
         ("α vs r  –  Kopplungsstärke über Radius", "fig_alpha_vs_r.png"),
         ("Ω_eff vs α  –  Kopplungs-Phasenraum", "fig_omega_vs_alpha.png"),
@@ -1240,7 +1255,7 @@ def main() -> int:
 
     if params.plots:
         plot_shells(shells, outdir)
-        plot_filament_web(shells, params, outdir)
+        plot_tensor_field_web(shells, params, outdir)
         if params.geometry:
             plot_xy(nodes, outdir)
             plot_trichter_xz(nodes, outdir)
